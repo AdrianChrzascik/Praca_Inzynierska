@@ -1,5 +1,8 @@
 @echo off
-python -m pip install pymysql
-python -m pip install kivymd
-python -m pip install prettytable
-python main.py
+set "APP=%~dp0dist\WMS\WMS.exe"
+if not exist "%APP%" (
+	echo Nie znaleziono gotowego programu. Uruchom build.ps1, aby go zbudowac.
+	pause
+	exit /b 1
+)
+start "" "%APP%"

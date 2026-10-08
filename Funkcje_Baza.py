@@ -1,8 +1,19 @@
+import pymysql
+
 from Connect import mydb
-from prettytable import PrettyTable
+from konwersje import (
+    convert_to_dict,
+    convert_to_dict_dst,
+    convert_to_dict_odb,
+    convert_to_dict_PZ,
+    convert_to_dict_WZ,
+)
+from vat import net_price, quantity, totals_from_net, vat_rate
+
+
 def select_tow():
     cur = mydb.cursor()
-    cur.execute("SELECT tow_kod, tow_name, ilo_is,ce FROM tow order by tow_kod desc ;")
+    cur.execute("SELECT tow_kod, tow_name, ilo_is, ce, vat_rate FROM tow ORDER BY tow_kod DESC;")
     tow = cur.fetchall()
     return tow
 
@@ -10,19 +21,22 @@ def select_tow_where(tow):
     cur = mydb.cursor()
     query_select = 'SELECT tow_kod FROM tow where tow_kod = %s;'
     cur.execute(query_select, tow)
-    tow = cur.fetchall()
-    if tow != ():
-        tow = tow[0]
-        tow = tow[0]
-        print(tow)
-        return tow
-    elif tow == ():
-        return False
+    result = cur.fetchall()
+    return result[0][0] if result else False
 
 
 def select_WZ():
     cur = mydb.cursor()
-    cur.execute("SELECT wz.idwz, wz.val, odb.name_odb FROM wz INNER JOIN odb ON wz.odb_kod_odb = odb.kod_odb;")
+    cur.execute("""
+        SELECT wz.idwz, COALESCE(totals.net, 0), COALESCE(totals.vat, 0),
+               COALESCE(totals.net, 0) + COALESCE(totals.vat, 0), odb.name_odb
+        FROM wz JOIN odb ON wz.odb_kod_odb = odb.kod_odb
+        LEFT JOIN (
+            SELECT wz_idwz, SUM(CAST(val AS DECIMAL(18,2))) AS net,
+                   SUM(ROUND(CAST(val AS DECIMAL(18,2)) * vat_rate / 100, 2)) AS vat
+            FROM wz_p GROUP BY wz_idwz
+        ) AS totals ON totals.wz_idwz = wz.idwz;
+    """)
     WZ = cur.fetchall()
     return WZ
 
@@ -38,7 +52,16 @@ def select_WZ_where(WZ):
 
 def select_PZ():
     cur = mydb.cursor()
-    cur.execute("SELECT pz.idpz, pz.val, dst.name_dst FROM pz INNER JOIN dst ON pz.dst_kod_dst = dst.kod_dst;")
+    cur.execute("""
+        SELECT pz.idpz, COALESCE(totals.net, 0), COALESCE(totals.vat, 0),
+               COALESCE(totals.net, 0) + COALESCE(totals.vat, 0), dst.name_dst
+        FROM pz JOIN dst ON pz.dst_kod_dst = dst.kod_dst
+        LEFT JOIN (
+            SELECT pz_idpz, SUM(CAST(val AS DECIMAL(18,2))) AS net,
+                   SUM(ROUND(CAST(val AS DECIMAL(18,2)) * vat_rate / 100, 2)) AS vat
+            FROM pz_p GROUP BY pz_idpz
+        ) AS totals ON totals.pz_idpz = pz.idpz;
+    """)
     PZ = cur.fetchall()
     return PZ
 
@@ -58,85 +81,37 @@ def select_odb_where(kod):
     cur = mydb.cursor()
     query_select = 'SELECT kod_odb FROM odb where kod_odb = %s;'
     cur.execute(query_select, kod)
-    odb = cur.fetchall()
-
-    if odb != ():
-        odb = odb[0]
-        odb = odb[0]
-        print(odb)
-        return odb
-    elif odb == ():
-        return False
+    result = cur.fetchall()
+    return result[0][0] if result else False
 
 
 def select_dst_where(kod):
     cur = mydb.cursor()
     query_select = 'SELECT kod_dst FROM dst where kod_dst = %s;'
     cur.execute(query_select, kod)
-    dst = cur.fetchall()
-    #print(dst)
-    #dst = dst[0]
-    #print(dst)
-    return dst
-
-def convert_to_dict(tow):
-  results = []
-  for row in tow:
-    results.append({
-        "tow_kod": row[0],
-        "tow_name": row[1],
-        "ilo_is": row[2],
-        "ce": row[3],
-    })
-  return results
-
-def convert_to_dict_odb(odb):
-  results = []
-  for row in odb:
-    results.append({
-        "tow_kod": row[0],
-        "tow_name": row[1],
-        "ilo_is": row[2]
-    })
-  return results
+    result = cur.fetchall()
+    return result[0][0] if result else False
 
 
-def convert_to_dict_dst(dst):
-  results = []
-  for row in dst:
-    results.append({
-        "tow_kod": row[0],
-        "tow_name": row[1],
-        "ilo_is": row[2]
-    })
-  return results
-
-def convert_to_dict_WZ(WZ):
-  results = []
-  for row in WZ:
-    results.append({
-        "idwz": row[0],
-        "val": row[1],
-        "name_odb": row[2]
-    })
-  return results
+_NEXT_CODE_QUERIES = {
+    "tow": "SELECT MAX(CAST(tow_kod AS DECIMAL(45, 0))) FROM tow WHERE tow_kod REGEXP '^[0-9]+$'",
+    "odb": "SELECT MAX(kod_odb) FROM odb",
+    "dst": "SELECT MAX(kod_dst) FROM dst",
+}
 
 
-def convert_to_dict_PZ(PZ):
-  results = []
-  for row in PZ:
-    results.append({
-        "idwz": row[0],
-        "val": row[1],
-        "name_odb": row[2]
-    })
-  return results
+def select_next_code(entity):
+    """Suggest the next numeric code without changing any existing codes."""
+    cur = mydb.cursor()
+    cur.execute(_NEXT_CODE_QUERIES[entity])
+    highest = cur.fetchone()[0]
+    return str(max(int(highest or 0), 0) + 1)
 
 
 def delete_tow(tow):
     cur = mydb.cursor()
     query_del = "delete from tow where tow_kod = %s;"
-    cur.execute(query_del,tow)
+    cur.execute(query_del, tow)
     mydb.commit()
 
 def delete_odb(odb):
@@ -193,20 +168,22 @@ def delete_PZ(PZ):
     mydb.commit()
 
 
-def add_tow(tow_kod, nazwa, ce):
+def add_tow(tow_kod, nazwa, ce, vat=0):
     cur = mydb.cursor()
-    tow_is = select_tow_where(tow_kod)
-    if tow_is == tow_kod:
-        #print('kod towaru juz występuje w bazie')
-        x=True
-    else:
-        query_add = "insert into tow (tow_kod, tow_name, ilo_is, ce) values (%s,%s, 0, %s);"
-        cur.execute(query_add, (tow_kod, nazwa, ce))
+    query_add = "insert into tow (tow_kod, tow_name, ilo_is, ce, vat_rate) values (%s,%s,0,%s,%s);"
+    try:
+        cur.execute(query_add, (tow_kod, nazwa, net_price(ce), vat_rate(vat)))
         mydb.commit()
-        x=False
-    return x
+    except pymysql.err.IntegrityError as error:
+        mydb.rollback()
+        if error.args[0] == 1062:
+            return True
+        raise
+    return False
 
 def display_data_in_table(self, dane_tow):
+    from prettytable import PrettyTable
+
     table = PrettyTable()
     table.field_names = ["Towar", "Kod", "Ilość", "Cena"]
 
@@ -215,89 +192,72 @@ def display_data_in_table(self, dane_tow):
     return table
 
 def select_tow2():
-    dane = select_tow()
-    dane_tow = [convert_to_dict(dane) for item in dane]
-    dane_tow = dane_tow[0]
-    dane_tow = [tuple(d.values()) for d in dane_tow]
-    return dane_tow
+    return [tuple(row) for row in select_tow()]
 
 def select_odb():
     cur = mydb.cursor()
-    cur.execute("SELECT * FROM odb order by kod_odb desc ;")
+    cur.execute("SELECT kod_odb, name_odb, nip FROM odb ORDER BY kod_odb DESC;")
     odb = cur.fetchall()
     return odb
 
 
 def select_odb2():
-    dane = select_odb()
-    dane_odb = [convert_to_dict_odb(dane) for item in dane]
-    dane_odb = dane_odb[0]
-    dane_odb = [tuple(d.values()) for d in dane_odb]
-    return dane_odb
+    return [tuple(row) for row in select_odb()]
 
 
 def select_dst():
     cur = mydb.cursor()
-    cur.execute("SELECT * FROM dst order by kod_dst desc ;")
+    cur.execute("SELECT kod_dst, name_dst, nip FROM dst ORDER BY kod_dst DESC;")
     dst = cur.fetchall()
     return dst
 
 
 def select_dst2():
-    dane = select_dst()
-    dane_dst = [convert_to_dict_dst(dane) for item in dane]
-    dane_dst = dane_dst[0]
-    dane_dst = [tuple(d.values()) for d in dane_dst]
-    return dane_dst
+    return [tuple(row) for row in select_dst()]
 
 def select_WZ2():
-    dane = select_WZ()
-    dane_WZ = [convert_to_dict_WZ(dane) for item in dane]
-    if len(dane_WZ) == 0:
-        pass
-    else:
-        dane_WZ = dane_WZ[0]
-        dane_WZ = [tuple(d.values()) for d in dane_WZ]
-    return dane_WZ
+    return [tuple(row) for row in select_WZ()]
 
 def select_PZ2():
-    dane = select_PZ()
-    dane_PZ = [convert_to_dict_WZ(dane) for item in dane]
-    dane_PZ = dane_PZ[0]
-    dane_PZ = [tuple(d.values()) for d in dane_PZ]
-    return dane_PZ
+    return [tuple(row) for row in select_PZ()]
+
+
+def zamien_przecinek_na_kropke(tekst):
+    return tekst.replace(',', '.')
 
 
 def add_odb(kod, nazwa, nip):
     cur = mydb.cursor()
-    kod_is = select_odb_where(kod)
-    if kod_is == kod:
-        print('kod towaru juz występuje w bazie')
-        x = True
-        return x
-    else:
-        query_add = "insert into odb (kod_odb, name_odb, nip) values (%s,%s,%s);"
+    query_add = "insert into odb (kod_odb, name_odb, nip) values (%s,%s,%s);"
+    try:
         cur.execute(query_add, (kod, nazwa, nip))
         mydb.commit()
+    except pymysql.err.IntegrityError as error:
+        mydb.rollback()
+        if error.args[0] == 1062:
+            return True
+        raise
+    return False
 
 
 def add_dst(kod, nazwa, nip):
     cur = mydb.cursor()
-    kod_is = select_dst_where(kod)
-    if kod_is == kod:
-        x = True
-    else:
-        query_add = "insert into dst (kod_dst, name_dst, nip) values (%s,%s,%s);"
+    query_add = "insert into dst (kod_dst, name_dst, nip) values (%s,%s,%s);"
+    try:
         cur.execute(query_add, (kod, nazwa, nip))
         mydb.commit()
-        x = False
-    return x
+    except pymysql.err.IntegrityError as error:
+        mydb.rollback()
+        if error.args[0] == 1062:
+            return True
+        raise
+    return False
 
-def tow_edit(kod, nazwa, cena):
+def tow_edit(kod, nazwa, cena, vat):
     cur = mydb.cursor()
     kod = kod.replace('Kod: ', '')
-    queue_update = "update tow set tow_name = %s , ce = %s where tow_kod = %s"
-    cur.execute(queue_update, (nazwa, cena, kod))
+    queue_update = "UPDATE tow SET tow_name = %s, ce = %s, vat_rate = %s WHERE tow_kod = %s"
+    cur.execute(queue_update, (nazwa, net_price(cena), vat_rate(vat), kod))
     mydb.commit()
 
 def dst_edit(kod, nazwa, nip):
@@ -315,84 +275,66 @@ def odb_edit(kod, nazwa, nip):
     mydb.commit()
 
 
-def add_wz(pozycje,odb):
-    cw = 0
-    cc = 0
+def _update_stock(cur, code, delta):
+    cur.execute("SELECT ilo_is FROM tow WHERE tow_kod = %s FOR UPDATE", (code,))
+    row = cur.fetchone()
+    if row is None:
+        raise ValueError(f"Towar {code} nie istnieje w bazie.")
+    new_quantity = float(row[0] or 0) + delta
+    if new_quantity < 0:
+        raise ValueError(f"Za mało towaru {code} na stanie.")
+    cur.execute("UPDATE tow SET ilo_is = %s WHERE tow_kod = %s", (new_quantity, code))
+
+
+def _write_document_lines(cur, kind, document_id, lines):
+    table, reference, stock_sign = {
+        "wz": ("wz_p", "wz_idwz", -1),
+        "pz": ("pz_p", "pz_idpz", 1),
+    }[kind]
+    total_net = 0
+    for code, _name, _price, amount, saved_net, rate in lines:
+        amount = quantity(amount)
+        net, _tax, _gross = totals_from_net(saved_net, rate)
+        if net < 0:
+            raise ValueError("Wartość netto pozycji nie może być ujemna.")
+        _update_stock(cur, code, stock_sign * amount)
+        cur.execute(
+            f"INSERT INTO {table} (val, vat_rate, tow_tow_kod, {reference}, ilo) VALUES (%s,%s,%s,%s,%s)",
+            (net, vat_rate(rate), code, document_id, amount),
+        )
+        total_net += net
+    return total_net
+
+
+def _add_document(kind, lines, partner_code):
+    if not lines:
+        raise ValueError("Dokument musi zawierać co najmniej jedną pozycję.")
+    table, partner_column = {
+        "wz": ("wz", "odb_kod_odb"),
+        "pz": ("pz", "dst_kod_dst"),
+    }[kind]
     cur = mydb.cursor()
-    query_insert_wz = "insert into wz (odb_kod_odb,dok_id) values (%s, %s)"
-    query_insert_wz_p = "insert into wz_p (val,tow_tow_kod,wz_idwz,ilo) values (%s,%s,%s,%s)"
-    query_update_tow = "update tow set ilo_is = %s where tow_kod = %s"
-    select_tow_ilo = "select ilo_is from tow where tow_kod = %s"
-    query_select_wz = "select idwz from wz order by idwz desc"
-    query_update_wz = "update wz set val = %s where idwz = %s"
-    cur.execute(query_select_wz)
-    wz = cur.fetchall()
-    print(wz)
-    if wz == ():
-        wz = 1
-    else:
-        wz = wz[0]
-        wz = wz[0] + 1
-    print(wz)
-    cur.execute(query_insert_wz, (odb, 'wz'))
-    mydb.commit()
-    for i in pozycje:
-        k = i[0]
-        c = i[2]
-        j = i[3]
-        print(c)
-        print(j)
-        w = float(c) * float(j)
-        cur.execute(select_tow_ilo, k)
-        tow_ilo = cur.fetchall()[0]
-        tow_ilo_ost = float(tow_ilo[0]) - float(j)
-        cw = cw + w
-        cc = cc + cw
-        print(wz)
-        cur.execute(query_insert_wz_p, (w, k, wz, j))
-        cur.execute(query_update_tow, (tow_ilo_ost, k))
-    cur.execute(query_update_wz, (cc, wz))
-    (mydb.commit())
+    try:
+        cur.execute(
+            f"INSERT INTO {table} ({partner_column}, dok_id) VALUES (%s,%s)",
+            (partner_code, kind),
+        )
+        document_id = cur.lastrowid
+        total_net = _write_document_lines(cur, kind, document_id, lines)
+        cur.execute(f"UPDATE {table} SET val = %s WHERE id{kind} = %s", (total_net, document_id))
+        mydb.commit()
+        return document_id
+    except Exception:
+        mydb.rollback()
+        raise
+
+
+def add_wz(pozycje, odb):
+    return _add_document("wz", pozycje, odb)
 
 
 def add_pz(pozycje, dst, tow_ilo_ost=None):
-    cw = 0
-    cc = 0
-    cur = mydb.cursor()
-    query_insert_pz = "insert into pz (dst_kod_dst,dok_id,idpz) values (%s, %s, %s)"
-    query_insert_pz_p = "insert into pz_p (val,tow_tow_kod,pz_idpz,ilo) values (%s,%s,%s,%s)"
-    query_update_tow = "update tow set ilo_is = %s where tow_kod = %s"
-    select_tow_ilo = "select ilo_is from tow where tow_kod = %s"
-    query_select_pz = "select idpz from pz order by idpz desc"
-    query_update_pz = "update pz set val = %s where idpz = %s"
-    cur.execute(query_select_pz)
-    pz = cur.fetchall()
-    print(pz)
-    if pz == ():
-        pz = 1
-    else:
-        pz = pz[0]
-        pz = pz[0] + 1
-    print(pz)
-    cur.execute(query_insert_pz, (dst, 'pz', pz))
-    mydb.commit()
-    for i in pozycje:
-        k = i[0]
-        c = i[2]
-        j = i[3]
-        print(c)
-        print(j)
-        w = float(c) * float(j)
-        cur.execute(select_tow_ilo, k)
-        tow_ilo = cur.fetchall()[0]
-        tow_ilo_ost = float(tow_ilo[0]) + float(j)
-        cw = cw + w
-        cc = cc + cw
-        print(pz)
-        cur.execute(query_insert_pz_p, (w, k, pz, j))
-        cur.execute(query_update_tow, (tow_ilo_ost, k))
-    cur.execute(query_update_pz, (cc, pz))
-    (mydb.commit())
+    return _add_document("pz", pozycje, dst)
 
 
 def ilo_check(tow):
@@ -411,7 +353,7 @@ def select_pz_edit(pz):
     cur = mydb.cursor()
     query_select_pz = "select dst_kod_dst from pz where idpz = %s"
     print(pz)
-    query_select_pz_p = "select ilo, val, tow_tow_kod, tow.tow_name, tow.ce from pz_p left join tow on pz_p.tow_tow_kod = tow.tow_kod where pz_idpz = %s"
+    query_select_pz_p = "SELECT pz_p.ilo, pz_p.val, pz_p.tow_tow_kod, tow.tow_name, COALESCE(pz_p.val / NULLIF(pz_p.ilo, 0), tow.ce), pz_p.vat_rate FROM pz_p LEFT JOIN tow ON pz_p.tow_tow_kod = tow.tow_kod WHERE pz_idpz = %s"
     cur.execute(query_select_pz, pz)
     x_pz = cur.fetchall()
     cur.execute(query_select_pz_p, pz)
@@ -422,7 +364,7 @@ def select_wz_edit(wz):
     cur = mydb.cursor()
     query_select_wz = "select odb_kod_odb from wz where idwz = %s"
     print(wz)
-    query_select_wz_p = "select ilo, val, tow_tow_kod, tow.tow_name, tow.ce from wz_p left join tow on wz_p.tow_tow_kod = tow.tow_kod where wz_idwz = %s"
+    query_select_wz_p = "SELECT wz_p.ilo, wz_p.val, wz_p.tow_tow_kod, tow.tow_name, COALESCE(wz_p.val / NULLIF(wz_p.ilo, 0), tow.ce), wz_p.vat_rate FROM wz_p LEFT JOIN tow ON wz_p.tow_tow_kod = tow.tow_kod WHERE wz_idwz = %s"
     cur.execute(query_select_wz, wz)
     x_wz = cur.fetchall()
     cur.execute(query_select_wz_p, wz)
@@ -442,62 +384,39 @@ def del_wz_p(WZ):
     mydb.commit()
 
 
-def edit_pz(pozycje, pz):
-    cw = 0
-    cc = 0
+def _edit_document(kind, lines, document_id, partner_code=None):
+    if not lines:
+        raise ValueError("Dokument musi zawierać co najmniej jedną pozycję.")
+    header, line_table, reference, partner_column, stock_sign = {
+        "wz": ("wz", "wz_p", "wz_idwz", "odb_kod_odb", -1),
+        "pz": ("pz", "pz_p", "pz_idpz", "dst_kod_dst", 1),
+    }[kind]
     cur = mydb.cursor()
-    query_insert_pz_p = "insert into pz_p (val,tow_tow_kod,pz_idpz,ilo) values (%s,%s,%s,%s)"
-    query_update_towar = "update tow set ilo_is = %s where tow_kod = %s"
-    select_tow_ilo = "select ilo_is from tow where tow_kod = %s"
-    query_select_pz = "select idpz from pz order by idpz desc"
-    query_update_pz = "update pz set val = %s where idpz = %s"
-    cur.execute(query_select_pz)
-    print(pozycje)
-    for i in pozycje:
-        #print(i)
-        k = i[2]
-        c = i[4]
-        j = i[0]
-        w = float(c) * float(j)
-        cur.execute(select_tow_ilo, k)
-        tow_ilo = cur.fetchall()[0]
-        tow_ilo_ost = float(tow_ilo[0]) + float(j)
-        cw = cw + w
-        cc = cc + cw
-        cur.execute(query_insert_pz_p, (w, k, pz, j))
-        cur.execute(query_update_towar, (tow_ilo_ost, k))
-    cur.execute(query_update_pz, (cc, pz))
-    mydb.commit()
+    try:
+        cur.execute(
+            f"SELECT tow_tow_kod, ilo FROM {line_table} WHERE {reference} = %s FOR UPDATE",
+            (document_id,),
+        )
+        for code, amount in cur.fetchall():
+            _update_stock(cur, code, -stock_sign * int(amount))
+        cur.execute(f"DELETE FROM {line_table} WHERE {reference} = %s", (document_id,))
+        total_net = _write_document_lines(cur, kind, document_id, lines)
+        if partner_code is None:
+            cur.execute(f"UPDATE {header} SET val = %s WHERE id{kind} = %s", (total_net, document_id))
+        else:
+            cur.execute(
+                f"UPDATE {header} SET val = %s, {partner_column} = %s WHERE id{kind} = %s",
+                (total_net, partner_code, document_id),
+            )
+        mydb.commit()
+    except Exception:
+        mydb.rollback()
+        raise
 
 
-def edit_wz(pozycje, wz):
-    cw = 0
-    cc = 0
-    cur = mydb.cursor()
-    query_insert_pz_p = "insert into wz_p (val,tow_tow_kod,pz_idpz,ilo) values (%s,%s,%s,%s)"
-    query_update_towar = "update tow set ilo_is = %s where tow_kod = %s"
-    select_tow_ilo = "select ilo_is from tow where tow_kod = %s"
-    query_select_pz = "select idwz from wz order by idwz desc"
-    query_update_pz = "update wz set val = %s where idwz = %s"
-    cur.execute(query_select_pz)
-    print(pozycje)
-    for i in pozycje:
-        #print(i)
-        k = i[2]
-        c = i[4]
-        j = i[0]
-        w = float(c) * float(j)
-        cur.execute(select_tow_ilo, k)
-        tow_ilo = cur.fetchall()[0]
-        tow_ilo_ost = float(tow_ilo[0]) + float(j)
-        cw = cw + w
-        cc = cc + cw
-        cur.execute(query_insert_pz_p, (w, k, wz, j))
-        cur.execute(query_update_towar, (tow_ilo_ost, k))
-    cur.execute(query_update_pz, (cc, wz))
-    mydb.commit()
+def edit_pz(pozycje, pz, dst=None):
+    _edit_document("pz", pozycje, pz, dst)
 
-def zamien_przecinek_na_kropke(tekst):
-    if ',' in tekst:
-        tekst = tekst.replace(',', '.')
-    return tekst
+
+def edit_wz(pozycje, wz, odb=None):
+    _edit_document("wz", pozycje, wz, odb)
