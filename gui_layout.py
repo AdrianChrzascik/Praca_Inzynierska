@@ -11,15 +11,42 @@ from kivymd.uix.button import MDRaisedButton
 from kivymd.uix.datatables import MDDataTable
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
+from user_settings import PALETTES
 
 
-BACKGROUND = get_color_from_hex("#111827")
-SURFACE = get_color_from_hex("#1D293B")
-HEADER = get_color_from_hex("#293A53")
-SELECTED = get_color_from_hex("#31577D")
-PRIMARY = get_color_from_hex("#2F75C8")
-SECONDARY = get_color_from_hex("#40536B")
-DANGER = get_color_from_hex("#A84752")
+def set_palette(style):
+    global BACKGROUND, SURFACE, HEADER, SELECTED, PRIMARY, SECONDARY, DANGER
+    colors = PALETTES[style]
+    BACKGROUND = get_color_from_hex(colors["background"])
+    SURFACE = get_color_from_hex(colors["surface"])
+    HEADER = get_color_from_hex(colors["header"])
+    SELECTED = get_color_from_hex(colors["selected"])
+    PRIMARY = get_color_from_hex(colors["primary"])
+    SECONDARY = get_color_from_hex(colors["secondary"])
+    DANGER = get_color_from_hex(colors["danger"])
+
+
+set_palette("Dark")
+
+
+def apply_palette(root, style):
+    """Recolor screens already built with the shared layout helpers."""
+    set_palette(style)
+    for screen in root.screens:
+        for widget in screen.walk():
+            role = getattr(widget, "_wms_role", None)
+            if role == "background":
+                widget.md_bg_color = BACKGROUND
+            elif role == "surface":
+                widget.md_bg_color = SURFACE
+            elif role == "button":
+                _color_button(widget)
+            elif role == "table":
+                widget.background_color_header = HEADER
+                widget.background_color_cell = SURFACE
+                widget.background_color_selected_cell = SELECTED
+                widget.header.background_color_header = HEADER
+                widget.update_row_data(widget, list(widget.row_data))
 
 SCREEN_TITLES = {
     "add_tow": "Nowy towar",
@@ -50,6 +77,9 @@ COLUMN_WEIGHTS = {
     "Cena": 1.1,
     "Cena netto": 1.2,
     "VAT %": 0.8,
+    "Dodano": 1.5,
+    "Ostatnia edycja": 1.5,
+    "Data wystawienia": 1.4,
     "Netto": 1.3,
     "VAT": 1.1,
     "Brutto": 1.3,
@@ -94,7 +124,18 @@ def create_table(**kwargs):
     kwargs.setdefault("background_color_header", HEADER)
     kwargs.setdefault("background_color_cell", SURFACE)
     kwargs.setdefault("background_color_selected_cell", SELECTED)
-    return MDDataTable(**kwargs)
+    table = MDDataTable(**kwargs)
+    table._wms_role = "table"
+    return table
+
+
+def _color_button(button):
+    if button.text.startswith(("Usuń", "Zamknij")):
+        button.md_bg_color = DANGER
+    elif button.text.startswith(("Powrót", "Anuluj")):
+        button.md_bg_color = SECONDARY
+    else:
+        button.md_bg_color = PRIMARY
 
 
 def _style_button(button, height=dp(46)):
@@ -102,12 +143,8 @@ def _style_button(button, height=dp(46)):
     button.size_hint = (1, None)
     button.height = height
     button.font_size = "14sp"
-    if button.text.startswith(("Usuń", "Zamknij")):
-        button.md_bg_color = DANGER
-    elif button.text.startswith(("Powrót", "Anuluj")):
-        button.md_bg_color = SECONDARY
-    else:
-        button.md_bg_color = PRIMARY
+    button._wms_role = "button"
+    _color_button(button)
 
 
 def _make_header(title, subtitle=None):
@@ -147,15 +184,18 @@ def _attach_menu(layout, widgets):
     buttons = [widget for widget in widgets if isinstance(widget, MDRaisedButton)]
     status = next((widget for widget in widgets if isinstance(widget, MDLabel)), None)
 
+    rows = ceil(len(buttons) / 2)
+    menu_height = dp(rows * 58 + max(0, rows - 1) * 12)
     card = MDBoxLayout(
         orientation="vertical",
         size_hint=(0.82, None),
         pos_hint={"center_x": 0.5},
-        height=dp(390),
+        height=dp(192) + menu_height,
         padding=dp(24),
         spacing=dp(14),
         md_bg_color=SURFACE,
     )
+    card._wms_role = "surface"
     card.add_widget(_make_header("WMS", "Wybierz obszar pracy"))
     menu = GridLayout(
         cols=2,
@@ -163,7 +203,7 @@ def _attach_menu(layout, widgets):
         row_force_default=True,
         row_default_height=dp(58),
         size_hint_y=None,
-        height=dp(198),
+        height=menu_height,
     )
     for button in buttons:
         _style_button(button, dp(58))
@@ -187,6 +227,7 @@ def attach_screen_layout(screen, layout):
     layout.padding = [dp(20), dp(16), dp(20), dp(16)]
     layout.spacing = dp(12)
     layout.md_bg_color = BACKGROUND
+    layout._wms_role = "background"
 
     if screen.name == "main_menu":
         _attach_menu(layout, widgets)

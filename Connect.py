@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import configparser
-import ctypes
 import os
 import sys
 from pathlib import Path
 
 import pymysql
+from startup_dialog import show_startup_error
 
 
 def _config_path() -> Path:
@@ -26,16 +26,8 @@ def _config_path() -> Path:
     return executable_dir / "database.ini"
 
 
-def _show_startup_error(message: str) -> None:
-    if sys.platform == "win32":
-        ctypes.windll.user32.MessageBoxW(  # type: ignore[attr-defined]
-            None,
-            message,
-            "WMS — problem z bazą danych",
-            0x10,
-        )
-    else:
-        print(message, file=sys.stderr)
+def _show_startup_error(message: str, offer_installer=False) -> None:
+    show_startup_error(message, offer_installer=offer_installer)
 
 
 def _connect() -> pymysql.connections.Connection:
@@ -46,7 +38,8 @@ def _connect() -> pymysql.connections.Connection:
         _show_startup_error(
             "Nie znaleziono konfiguracji bazy danych.\n\n"
             f"Oczekiwany plik: {config_path}\n"
-            "Uruchom instalator WMS albo utwórz plik database.ini."
+            "Uruchom instalator WMS albo utwórz plik database.ini.",
+            offer_installer=True,
         )
         raise SystemExit(1)
 
@@ -64,18 +57,24 @@ def _connect() -> pymysql.connections.Connection:
         )
         cursor = connection.cursor()
         cursor.execute(
-            "SELECT TABLE_NAME FROM information_schema.COLUMNS "
-            "WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'vat_rate' "
-            "AND TABLE_NAME IN ('tow', 'wz_p', 'pz_p')"
+            "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('tow', 'wz_p', 'pz_p', 'wz', 'pz') "
+            "AND COLUMN_NAME IN ('vat_rate', 'added_at', 'modified_at', 'issue_date')"
         )
-        available = {row[0] for row in cursor.fetchall()}
-        missing = {"tow", "wz_p", "pz_p"} - available
+        available = {tuple(row) for row in cursor.fetchall()}
+        required = {
+            ("tow", "vat_rate"), ("wz_p", "vat_rate"), ("pz_p", "vat_rate"),
+            ("tow", "added_at"), ("tow", "modified_at"),
+            ("wz", "issue_date"), ("pz", "issue_date"),
+        }
+        missing = required - available
         if missing:
             connection.close()
             _show_startup_error(
-                "Baza danych wymaga aktualizacji dla obsługi VAT.\n\n"
+                "Baza danych wymaga aktualizacji dla obsługi VAT i dat.\n\n"
                 "Uruchom ponownie Zainstaluj-WMS.cmd, aby dodać brakujące kolumny "
-                "bez usuwania danych."
+                "bez usuwania danych.",
+                offer_installer=True,
             )
             raise SystemExit(1)
         return connection
@@ -84,7 +83,8 @@ def _connect() -> pymysql.connections.Connection:
             "Nie można połączyć się z MariaDB.\n\n"
             f"Konfiguracja: {config_path}\n"
             "Sprawdź, czy usługa MariaDB działa oraz czy dane w database.ini są poprawne.\n\n"
-            f"Szczegóły: {error}"
+            f"Szczegóły: {error}",
+            offer_installer=True,
         )
         raise SystemExit(1) from error
 

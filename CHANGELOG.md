@@ -4,6 +4,20 @@ Każdy wpis opisuje zmianę i powód jej wprowadzenia.
 
 ## 2026-10-08
 
+### Komunikaty błędów i motyw
+
+- **Zmiana:** Komunikaty w działającym programie korzystają ze wspólnego okna w kolorach WMS, z nagłówkiem, zaokrąglonymi narożnikami i przyciskami dopasowanymi do motywu. Błędy połączenia wyświetlane przed uruchomieniem GUI mają osobne okno w tych samych kolorach. **Powód:** Błędy są czytelne i wyglądają spójnie z aplikacją także wtedy, gdy baza uniemożliwia uruchomienie KivyMD.
+- **Zmiana:** Przy braku konfiguracji bazy, koniecznej aktualizacji schematu lub błędzie połączenia okno startowe udostępnia „Uruchom instalator”, gdy komplet jego plików znajduje się obok programu. Instalator kopiuje te pliki do katalogu zainstalowanej aplikacji i potrafi uruchomić naprawę z tego katalogu. **Powód:** Użytkownik może od razu wykonać instalację, migrację lub ponowne przygotowanie połączenia bez szukania pliku w rozpakowanej paczce.
+- **Zmiana:** W menu głównym dodano przełącznik trybu dziennego i nocnego; kolory ekranów, tabel, przycisków i okien są zmieniane podczas pracy, a wybór jest zapisywany dla użytkownika. **Powód:** Interfejs można dopasować do oświetlenia i preferencji bez ponownego uruchamiania programu.
+- **Zmiana:** Uzupełniono instrukcję oraz testy ustawień wyglądu i wykrywania instalatora. **Powód:** Nowe działania muszą być łatwe do znalezienia i sprawdzane bez wykonywania instalacji na danych użytkownika.
+
+### Daty towarów i dokumentów
+
+- **Zmiana:** Towar otrzymuje automatyczną datę i godzinę dodania, a edycja jego nazwy, ceny lub VAT zapisuje datę i godzinę ostatniej edycji. Obie informacje widać w tabeli towarów i formularzu edycji. **Powód:** Można sprawdzić, kiedy założono kartę towaru i kiedy ostatnio zmieniono jej dane, bez ręcznego wpisywania dat.
+- **Zmiana:** Formularze tworzenia PZ/WZ podpowiadają dzisiejszą datę wystawienia; przy tworzeniu i edycji można wpisać inną poprawną datę w formacie `RRRR-MM-DD`. Daty są zapisywane i pokazywane w listach dokumentów. **Powód:** Dokument zachowuje właściwą datę operacji, także gdy jest wystawiany później lub korygowany.
+- **Zmiana:** Instalator dodaje brakujące kolumny dat bez usuwania danych, a aplikacja sygnalizuje potrzebę aktualizacji bazy. Istniejące rekordy pozostają bez dat historycznych; przy edycji starego dokumentu trzeba je uzupełnić. **Powód:** Nie można wiarygodnie odtworzyć dat wcześniejszych operacji na podstawie obecnych danych.
+- **Zmiana:** Uzupełniono instrukcję instalacji oraz testy poprawności dat i zapisu dokumentów. **Powód:** Format daty i sposób aktualizacji bazy muszą być jasne, a błędna data nie może trafić do dokumentu.
+
 ### Wybór kontrahenta w dokumentach
 
 - **Zmiana:** Usunięto osobne przyciski „Dostawcy” i „Odbiorcy” z formularzy dodawania i edycji PZ/WZ. Ikona po prawej stronie pola kontrahenta otwiera dotychczasową listę, a wybrany kod wraca do pola; kod można nadal wpisać ręcznie. **Powód:** Wybór kontrahenta jest dostępny przy polu, którego dotyczy, bez dodatkowego przycisku w sekcji działań dokumentu.

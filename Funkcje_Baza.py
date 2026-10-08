@@ -1,6 +1,8 @@
 import pymysql
+from datetime import date
 
 from Connect import mydb
+from dates import parse_issue_date
 from konwersje import (
     convert_to_dict,
     convert_to_dict_dst,
@@ -13,7 +15,7 @@ from vat import net_price, quantity, totals_from_net, vat_rate
 
 def select_tow():
     cur = mydb.cursor()
-    cur.execute("SELECT tow_kod, tow_name, ilo_is, ce, vat_rate FROM tow ORDER BY tow_kod DESC;")
+    cur.execute("SELECT tow_kod, tow_name, ilo_is, ce, vat_rate, added_at, modified_at FROM tow ORDER BY tow_kod DESC;")
     tow = cur.fetchall()
     return tow
 
@@ -28,7 +30,7 @@ def select_tow_where(tow):
 def select_WZ():
     cur = mydb.cursor()
     cur.execute("""
-        SELECT wz.idwz, COALESCE(totals.net, 0), COALESCE(totals.vat, 0),
+        SELECT wz.idwz, wz.issue_date, COALESCE(totals.net, 0), COALESCE(totals.vat, 0),
                COALESCE(totals.net, 0) + COALESCE(totals.vat, 0), odb.name_odb
         FROM wz JOIN odb ON wz.odb_kod_odb = odb.kod_odb
         LEFT JOIN (
@@ -53,7 +55,7 @@ def select_WZ_where(WZ):
 def select_PZ():
     cur = mydb.cursor()
     cur.execute("""
-        SELECT pz.idpz, COALESCE(totals.net, 0), COALESCE(totals.vat, 0),
+        SELECT pz.idpz, pz.issue_date, COALESCE(totals.net, 0), COALESCE(totals.vat, 0),
                COALESCE(totals.net, 0) + COALESCE(totals.vat, 0), dst.name_dst
         FROM pz JOIN dst ON pz.dst_kod_dst = dst.kod_dst
         LEFT JOIN (
@@ -170,7 +172,7 @@ def delete_PZ(PZ):
 
 def add_tow(tow_kod, nazwa, ce, vat=0):
     cur = mydb.cursor()
-    query_add = "insert into tow (tow_kod, tow_name, ilo_is, ce, vat_rate) values (%s,%s,0,%s,%s);"
+    query_add = "insert into tow (tow_kod, tow_name, ilo_is, ce, vat_rate, added_at) values (%s,%s,0,%s,%s,NOW());"
     try:
         cur.execute(query_add, (tow_kod, nazwa, net_price(ce), vat_rate(vat)))
         mydb.commit()
@@ -256,7 +258,7 @@ def add_dst(kod, nazwa, nip):
 def tow_edit(kod, nazwa, cena, vat):
     cur = mydb.cursor()
     kod = kod.replace('Kod: ', '')
-    queue_update = "UPDATE tow SET tow_name = %s, ce = %s, vat_rate = %s WHERE tow_kod = %s"
+    queue_update = "UPDATE tow SET tow_name = %s, ce = %s, vat_rate = %s, modified_at = NOW() WHERE tow_kod = %s"
     cur.execute(queue_update, (nazwa, net_price(cena), vat_rate(vat), kod))
     mydb.commit()
 
@@ -306,18 +308,19 @@ def _write_document_lines(cur, kind, document_id, lines):
     return total_net
 
 
-def _add_document(kind, lines, partner_code):
+def _add_document(kind, lines, partner_code, document_date=None):
     if not lines:
         raise ValueError("Dokument musi zawierać co najmniej jedną pozycję.")
     table, partner_column = {
         "wz": ("wz", "odb_kod_odb"),
         "pz": ("pz", "dst_kod_dst"),
     }[kind]
+    document_date = date.today() if document_date is None else parse_issue_date(document_date)
     cur = mydb.cursor()
     try:
         cur.execute(
-            f"INSERT INTO {table} ({partner_column}, dok_id) VALUES (%s,%s)",
-            (partner_code, kind),
+            f"INSERT INTO {table} ({partner_column}, dok_id, issue_date) VALUES (%s,%s,%s)",
+            (partner_code, kind, document_date),
         )
         document_id = cur.lastrowid
         total_net = _write_document_lines(cur, kind, document_id, lines)
@@ -329,12 +332,12 @@ def _add_document(kind, lines, partner_code):
         raise
 
 
-def add_wz(pozycje, odb):
-    return _add_document("wz", pozycje, odb)
+def add_wz(pozycje, odb, document_date=None):
+    return _add_document("wz", pozycje, odb, document_date)
 
 
-def add_pz(pozycje, dst, tow_ilo_ost=None):
-    return _add_document("pz", pozycje, dst)
+def add_pz(pozycje, dst, tow_ilo_ost=None, document_date=None):
+    return _add_document("pz", pozycje, dst, document_date)
 
 
 def ilo_check(tow):
@@ -351,7 +354,7 @@ def ilo_check(tow):
 
 def select_pz_edit(pz):
     cur = mydb.cursor()
-    query_select_pz = "select dst_kod_dst from pz where idpz = %s"
+    query_select_pz = "select dst_kod_dst, issue_date from pz where idpz = %s"
     print(pz)
     query_select_pz_p = "SELECT pz_p.ilo, pz_p.val, pz_p.tow_tow_kod, tow.tow_name, COALESCE(pz_p.val / NULLIF(pz_p.ilo, 0), tow.ce), pz_p.vat_rate FROM pz_p LEFT JOIN tow ON pz_p.tow_tow_kod = tow.tow_kod WHERE pz_idpz = %s"
     cur.execute(query_select_pz, pz)
@@ -362,7 +365,7 @@ def select_pz_edit(pz):
 
 def select_wz_edit(wz):
     cur = mydb.cursor()
-    query_select_wz = "select odb_kod_odb from wz where idwz = %s"
+    query_select_wz = "select odb_kod_odb, issue_date from wz where idwz = %s"
     print(wz)
     query_select_wz_p = "SELECT wz_p.ilo, wz_p.val, wz_p.tow_tow_kod, tow.tow_name, COALESCE(wz_p.val / NULLIF(wz_p.ilo, 0), tow.ce), wz_p.vat_rate FROM wz_p LEFT JOIN tow ON wz_p.tow_tow_kod = tow.tow_kod WHERE wz_idwz = %s"
     cur.execute(query_select_wz, wz)
@@ -384,9 +387,11 @@ def del_wz_p(WZ):
     mydb.commit()
 
 
-def _edit_document(kind, lines, document_id, partner_code=None):
+def _edit_document(kind, lines, document_id, partner_code=None, document_date=None):
     if not lines:
         raise ValueError("Dokument musi zawierać co najmniej jedną pozycję.")
+    if document_date is not None:
+        document_date = parse_issue_date(document_date)
     header, line_table, reference, partner_column, stock_sign = {
         "wz": ("wz", "wz_p", "wz_idwz", "odb_kod_odb", -1),
         "pz": ("pz", "pz_p", "pz_idpz", "dst_kod_dst", 1),
@@ -401,22 +406,28 @@ def _edit_document(kind, lines, document_id, partner_code=None):
             _update_stock(cur, code, -stock_sign * int(amount))
         cur.execute(f"DELETE FROM {line_table} WHERE {reference} = %s", (document_id,))
         total_net = _write_document_lines(cur, kind, document_id, lines)
-        if partner_code is None:
-            cur.execute(f"UPDATE {header} SET val = %s WHERE id{kind} = %s", (total_net, document_id))
-        else:
-            cur.execute(
-                f"UPDATE {header} SET val = %s, {partner_column} = %s WHERE id{kind} = %s",
-                (total_net, partner_code, document_id),
-            )
+        assignments = ["val = %s"]
+        values = [total_net]
+        if partner_code is not None:
+            assignments.append(f"{partner_column} = %s")
+            values.append(partner_code)
+        if document_date is not None:
+            assignments.append("issue_date = %s")
+            values.append(document_date)
+        values.append(document_id)
+        cur.execute(
+            f"UPDATE {header} SET {', '.join(assignments)} WHERE id{kind} = %s",
+            tuple(values),
+        )
         mydb.commit()
     except Exception:
         mydb.rollback()
         raise
 
 
-def edit_pz(pozycje, pz, dst=None):
-    _edit_document("pz", pozycje, pz, dst)
+def edit_pz(pozycje, pz, dst=None, document_date=None):
+    _edit_document("pz", pozycje, pz, dst, document_date)
 
 
-def edit_wz(pozycje, wz, odb=None):
-    _edit_document("wz", pozycje, wz, odb)
+def edit_wz(pozycje, wz, odb=None, document_date=None):
+    _edit_document("wz", pozycje, wz, odb, document_date)

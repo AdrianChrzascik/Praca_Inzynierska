@@ -39,13 +39,32 @@ from Funkcje_Baza import (
     tow_edit,
 )
 from konwersje import zamien_przecinek_na_kropke
+from dates import issue_date_text, parse_issue_date, timestamp_text, today_text
 from vat import line_totals, money_text, net_price, quantity, totals_from_net, vat_rate
 from kivy.metrics import dp
-from gui_layout import attach_screen_layout, create_table
+from gui_layout import apply_palette, attach_screen_layout, create_table, set_palette
 from kivymd.uix.button import MDRaisedButton, MDFlatButton
 from kivymd.uix.textfield import MDTextField
-from kivymd.uix.dialog import MDDialog
+from kivymd.uix.dialog import MDDialog as BaseMDDialog
 from kivymd.uix.label import MDLabel
+from kivy.utils import get_color_from_hex
+from user_settings import PALETTES, load_theme, save_theme
+
+
+class MDDialog(BaseMDDialog):
+    """Use the active WMS palette for all existing application messages."""
+
+    def __init__(self, **kwargs):
+        app = App.get_running_app()
+        style = app.theme_cls.theme_style if app else load_theme()
+        colors = PALETTES[style]
+        kwargs.setdefault("title", "WMS")
+        kwargs.setdefault("md_bg_color", get_color_from_hex(colors["surface"]))
+        kwargs.setdefault("radius", [dp(14)] * 4)
+        for button in kwargs.get("buttons", []):
+            button.theme_text_color = "Custom"
+            button.text_color = get_color_from_hex(colors["primary"])
+        super().__init__(**kwargs)
 
 
 class PartnerSelectField(MDTextField):
@@ -184,11 +203,15 @@ class MainMenu(Screen):
         button6 = MDRaisedButton(text='Zamknij Program')
         button6.bind(on_press=self.close_program)
 
+        self.theme_button = MDRaisedButton(text='Tryb dzienny')
+        self.theme_button.bind(on_press=self.toggle_theme)
+
         layout.add_widget(button1)
         layout.add_widget(button2)
         layout.add_widget(button3)
         layout.add_widget(button4)
         layout.add_widget(button5)
+        layout.add_widget(self.theme_button)
         layout.add_widget(button6)
         self.message_label = MDLabel(text='', size = (50,50))
         layout.add_widget(self.message_label)
@@ -219,6 +242,9 @@ class MainMenu(Screen):
         self.message_label.text = 'Zamknij Program'
         App.get_running_app().stop()
 
+    def toggle_theme(self, instance):
+        self.app.toggle_theme()
+
 class EditScreenTow(Screen):
 
     def __init__(self, **kwargs ):
@@ -232,12 +258,16 @@ class EditScreenTow(Screen):
         self.nazwa = MDTextField(hint_text='Nazwa', text='')
         self.cena = MDTextField(hint_text='Cena netto', text='')
         self.vat = MDTextField(hint_text='VAT %', text='0')
+        self.added_at = MDTextField(hint_text='Data dodania', readonly=True)
+        self.modified_at = MDTextField(hint_text='Ostatnia edycja', readonly=True)
 
         layout.add_widget(okno)
         layout.add_widget(self.kod)
         layout.add_widget(self.nazwa)
         layout.add_widget(self.cena)
         layout.add_widget(self.vat)
+        layout.add_widget(self.added_at)
+        layout.add_widget(self.modified_at)
 
         button1 = MDRaisedButton(text='Potwierdz Edycje')
         button1.bind(on_press=self.tow_edit)
@@ -298,12 +328,14 @@ class AddScreenTow(SuggestedCodeScreen):
         self.text2 = MDTextField(hint_text='Nazwa')
         self.text3 = MDTextField(hint_text='Cena netto')
         self.vat = MDTextField(hint_text='VAT %', text='0')
+        self.date_info = MDLabel(text='Data dodania zapisze się automatycznie.')
 
         layout.add_widget(okno)
         layout.add_widget(self.text1)
         layout.add_widget(self.text2)
         layout.add_widget(self.text3)
         layout.add_widget(self.vat)
+        layout.add_widget(self.date_info)
 
         button1 = MDRaisedButton(text='Dodaj')
         button1.bind(on_press=self.tow_add)
@@ -382,15 +414,18 @@ class TowSelectScreen(Screen):
                 ("Nazwa", dp(30)),
                 ("Ilość", dp(30)),
                 ("Cena netto", dp(30)),
-                ("VAT %", dp(30))
+                ("VAT %", dp(30)),
+                ("Dodano", dp(30)),
+                ("Ostatnia edycja", dp(30))
             ],
         )
         self.dane_tow = select_tow2()
 
         for d in self.dane_tow:
-            k, n, i, c, rate = d
+            k, n, i, c, rate, added, modified = d
             self.table.add_row((
-                str(k), str(n), str(i), str(c), str(rate)
+                str(k), str(n), str(i), str(c), str(rate),
+                timestamp_text(added), timestamp_text(modified),
             ))
         layout.add_widget(self.table)
 
@@ -421,7 +456,11 @@ class TowSelectScreen(Screen):
 
     def refresh_table(self):
         self.dane_tow = select_tow2()
-        self.table.row_data = [tuple(str(value) for value in row) for row in self.dane_tow]
+        self.table.row_data = [
+            tuple(str(value) for value in row[:5])
+            + (timestamp_text(row[5]), timestamp_text(row[6]))
+            for row in self.dane_tow
+        ]
 
     def go_back(self, instance):
         self.manager.transition = SlideTransition(direction='right', duration=0.50)
@@ -462,6 +501,8 @@ class TowSelectScreen(Screen):
             self.dane_edit.nazwa.text = selected[1]
             self.dane_edit.cena.text = selected[3]
             self.dane_edit.vat.text = selected[4]
+            self.dane_edit.added_at.text = selected[5]
+            self.dane_edit.modified_at.text = selected[6]
 
     def show_alert_dialog(self, instance,text):
         self.dialog = MDDialog(
@@ -552,7 +593,7 @@ class TowSelectScreenToPZ(Screen):
 
     def refresh_table(self):
         self.dane_tow = select_tow2()
-        self.table.row_data = [tuple(str(value) for value in row) for row in self.dane_tow]
+        self.table.row_data = [tuple(str(value) for value in row[:5]) for row in self.dane_tow]
 
     def on_pre_enter(self, *args):
         self.refresh_table()
@@ -609,6 +650,7 @@ class WZScreen(Screen):
             rows_num=25,
             column_data=[
                 ("Numer", dp(30)),
+                ("Data wystawienia", dp(30)),
                 ("Wartość netto", dp(30)),
                 ("VAT", dp(30)),
                 ("Wartość brutto", dp(30)),
@@ -646,8 +688,9 @@ class WZScreen(Screen):
     def refresh_table(self):
         self.dane_WZ = select_WZ2()
         self.table.row_data = [
-            (str(number), money_text(net), money_text(vat), money_text(gross), str(recipient))
-            for number, net, vat, gross, recipient in self.dane_WZ
+            (str(number), issue_date_text(document_date), money_text(net),
+             money_text(vat), money_text(gross), str(recipient))
+            for number, document_date, net, vat, gross, recipient in self.dane_WZ
         ]
 
     def go_back(self, instance):
@@ -692,6 +735,7 @@ class WZScreen(Screen):
 
     def add(self, instance):
         self.manager.transition = SlideTransition(direction='left', duration=0.50)
+        self.manager.get_screen('add_WZ').issue_date.text = today_text()
         self.manager.current = 'add_WZ'
 
     def edit(self, instance):
@@ -703,7 +747,7 @@ class WZScreen(Screen):
         if not header:
             self.show_alert_dialog2(instance, 'Dokument WZ nie istnieje.')
             return
-        self.edit_wz.load_document(document_id, str(header[0][0]), lines)
+        self.edit_wz.load_document(document_id, str(header[0][0]), header[0][1], lines)
         self.manager.transition = SlideTransition(direction='left', duration=0.50)
         self.manager.current = 'edit_WZ'
 
@@ -755,6 +799,7 @@ class AddScreenWZ(DocumentLinesMixin, Screen):
         layout = MDBoxLayout(orientation='vertical', spacing=10, padding=20)
 
         self.odb = PartnerSelectField(self.to_dst, hint_text='Odbiorca (wybierz z listy)')
+        self.issue_date = MDTextField(hint_text='Data wystawienia (RRRR-MM-DD)', text=today_text())
         self.kod = MDTextField(hint_text='Kod', icon_right = 'language-python')
         self.nazwa = MDTextField(hint_text='Nazwa')
         self.cena = MDTextField(hint_text='Cena netto')
@@ -762,6 +807,7 @@ class AddScreenWZ(DocumentLinesMixin, Screen):
         self.ilosc = MDTextField(hint_text='Ilość')
 
         layout.add_widget(self.odb)
+        layout.add_widget(self.issue_date)
         layout.add_widget(self.kod)
         layout.add_widget(self.nazwa)
         layout.add_widget(self.cena)
@@ -845,7 +891,8 @@ class AddScreenWZ(DocumentLinesMixin, Screen):
             self.show_alert_dialog(instance, 'Wybierz odbiorcę z bazy.')
             return
         try:
-            add_wz(self.lines, self.odb.text.strip())
+            document_date = parse_issue_date(self.issue_date.text)
+            add_wz(self.lines, self.odb.text.strip(), document_date)
         except (ValueError, pymysql.MySQLError) as error:
             self.show_alert_dialog(instance, str(error))
             return
@@ -854,6 +901,7 @@ class AddScreenWZ(DocumentLinesMixin, Screen):
         self.dane_wz.refresh_table()
         self.show_alert_dialog(instance, 'WZ zostało wystawione.')
         self.odb.text = ''
+        self.issue_date.text = today_text()
         self.go_back(instance)
 
 
@@ -931,6 +979,7 @@ class AddScreenPZ(DocumentLinesMixin, Screen):
         layout = MDBoxLayout(orientation='vertical', spacing=10, padding=20)
 
         self.dst = PartnerSelectField(self.to_dst, hint_text='Dostawca (wybierz z listy)')
+        self.issue_date = MDTextField(hint_text='Data wystawienia (RRRR-MM-DD)', text=today_text())
         self.kod = MDTextField(hint_text='Kod', icon_right = 'language-python')
         self.nazwa = MDTextField(hint_text='Nazwa')
         self.cena = MDTextField(hint_text='Cena netto')
@@ -938,6 +987,7 @@ class AddScreenPZ(DocumentLinesMixin, Screen):
         self.ilosc = MDTextField(hint_text='Ilość')
 
         layout.add_widget(self.dst)
+        layout.add_widget(self.issue_date)
         layout.add_widget(self.kod)
         layout.add_widget(self.nazwa)
         layout.add_widget(self.cena)
@@ -1065,7 +1115,8 @@ class AddScreenPZ(DocumentLinesMixin, Screen):
             self.show_alert_dialog(instance, 'Wybierz dostawcę z bazy.')
             return
         try:
-            add_pz(self.lines, self.dst.text.strip())
+            document_date = parse_issue_date(self.issue_date.text)
+            add_pz(self.lines, self.dst.text.strip(), document_date=document_date)
         except (ValueError, pymysql.MySQLError) as error:
             self.show_alert_dialog(instance, str(error))
             return
@@ -1074,6 +1125,7 @@ class AddScreenPZ(DocumentLinesMixin, Screen):
         self.dane_pz.refresh_table()
         self.show_alert_dialog(instance, 'PZ zostało wystawione.')
         self.dst.text = ''
+        self.issue_date.text = today_text()
         self.go_back(instance)
 
 
@@ -1136,6 +1188,7 @@ class EditScreenPZ(DocumentLinesMixin, Screen):
         layout = MDBoxLayout(orientation='vertical', spacing=10, padding=20)
 
         self.dst = PartnerSelectField(self.to_dst, hint_text='Dostawca (wybierz z listy)')
+        self.issue_date = MDTextField(hint_text='Data wystawienia (RRRR-MM-DD)')
         self.kod = MDTextField(hint_text='Kod', icon_right = 'language-python')
         self.nazwa = MDTextField(hint_text='Nazwa')
         self.cena = MDTextField(hint_text='Cena netto')
@@ -1143,6 +1196,7 @@ class EditScreenPZ(DocumentLinesMixin, Screen):
         self.ilosc = MDTextField(hint_text='Ilość')
 
         layout.add_widget(self.dst)
+        layout.add_widget(self.issue_date)
         layout.add_widget(self.kod)
         layout.add_widget(self.nazwa)
         layout.add_widget(self.cena)
@@ -1200,9 +1254,10 @@ class EditScreenPZ(DocumentLinesMixin, Screen):
         self.table.bind(on_check_press=self.checked)
         self.table.bind(on_check_press=self.checked2)
 
-    def load_document(self, document_id, supplier, rows):
+    def load_document(self, document_id, supplier, document_date, rows):
         self.document_id = document_id
         self.dst.text = supplier
+        self.issue_date.text = "" if document_date is None else issue_date_text(document_date)
         self.lines = [
             (str(code), str(name or ""), net_price(money_text(price)),
              quantity(amount), Decimal(str(net)), vat_rate(rate))
@@ -1284,7 +1339,8 @@ class EditScreenPZ(DocumentLinesMixin, Screen):
             self.show_alert_dialog(instance, 'Wybierz dostawcę z bazy.')
             return
         try:
-            edit_pz(self.lines, self.document_id, self.dst.text.strip())
+            document_date = parse_issue_date(self.issue_date.text)
+            edit_pz(self.lines, self.document_id, self.dst.text.strip(), document_date)
         except (ValueError, pymysql.MySQLError) as error:
             self.show_alert_dialog(instance, str(error))
             return
@@ -1352,6 +1408,7 @@ class EditScreenWZ(DocumentLinesMixin, Screen):
         layout = MDBoxLayout(orientation='vertical', spacing=10, padding=20)
 
         self.odb = PartnerSelectField(self.to_odb, hint_text='Odbiorca (wybierz z listy)')
+        self.issue_date = MDTextField(hint_text='Data wystawienia (RRRR-MM-DD)')
         self.kod = MDTextField(hint_text='Kod', icon_right = 'language-python')
         self.nazwa = MDTextField(hint_text='Nazwa')
         self.cena = MDTextField(hint_text='Cena netto')
@@ -1359,6 +1416,7 @@ class EditScreenWZ(DocumentLinesMixin, Screen):
         self.ilosc = MDTextField(hint_text='Ilość')
 
         layout.add_widget(self.odb)
+        layout.add_widget(self.issue_date)
         layout.add_widget(self.kod)
         layout.add_widget(self.nazwa)
         layout.add_widget(self.cena)
@@ -1416,9 +1474,10 @@ class EditScreenWZ(DocumentLinesMixin, Screen):
         self.table.bind(on_check_press=self.checked)
         self.table.bind(on_check_press=self.checked2)
 
-    def load_document(self, document_id, recipient, rows):
+    def load_document(self, document_id, recipient, document_date, rows):
         self.document_id = document_id
         self.odb.text = recipient
+        self.issue_date.text = "" if document_date is None else issue_date_text(document_date)
         self.lines = [
             (str(code), str(name or ""), net_price(money_text(price)),
              quantity(amount), Decimal(str(net)), vat_rate(rate))
@@ -1500,7 +1559,8 @@ class EditScreenWZ(DocumentLinesMixin, Screen):
             self.show_alert_dialog(instance, 'Wybierz odbiorcę z bazy.')
             return
         try:
-            edit_wz(self.lines, self.document_id, self.odb.text.strip())
+            document_date = parse_issue_date(self.issue_date.text)
+            edit_wz(self.lines, self.document_id, self.odb.text.strip(), document_date)
         except (ValueError, pymysql.MySQLError) as error:
             self.show_alert_dialog(instance, str(error))
             return
@@ -1567,6 +1627,7 @@ class MenuScreenPZ(Screen):
             rows_num=25,
             column_data=[
                 ("Numer", dp(30)),
+                ("Data wystawienia", dp(30)),
                 ("Wartość netto", dp(30)),
                 ("VAT", dp(30)),
                 ("Wartość brutto", dp(30)),
@@ -1604,8 +1665,9 @@ class MenuScreenPZ(Screen):
     def refresh_table(self):
         self.dane_PZ = select_PZ2()
         self.table.row_data = [
-            (str(number), money_text(net), money_text(vat), money_text(gross), str(supplier))
-            for number, net, vat, gross, supplier in self.dane_PZ
+            (str(number), issue_date_text(document_date), money_text(net),
+             money_text(vat), money_text(gross), str(supplier))
+            for number, document_date, net, vat, gross, supplier in self.dane_PZ
         ]
 
     def go_back(self, instance):
@@ -1639,6 +1701,7 @@ class MenuScreenPZ(Screen):
 
     def add(self, instance):
         self.manager.transition = SlideTransition(direction='left', duration=0.50)
+        self.manager.get_screen('add_PZ').issue_date.text = today_text()
         self.manager.current = 'add_PZ'
 
     def edit(self, instance):
@@ -1650,7 +1713,7 @@ class MenuScreenPZ(Screen):
         if not header:
             self.show_alert_dialog(instance, 'Dokument PZ nie istnieje.')
             return
-        self.edit_pz.load_document(document_id, str(header[0][0]), lines)
+        self.edit_pz.load_document(document_id, str(header[0][0]), header[0][1], lines)
         self.manager.transition = SlideTransition(direction='left', duration=0.50)
         self.manager.current = 'edit_PZ'
 
@@ -2332,16 +2395,37 @@ class AddScreenDst(SuggestedCodeScreen):
 
 
 class MainApp(MDApp):
+    def toggle_theme(self):
+        style = "Light" if self.theme_cls.theme_style == "Dark" else "Dark"
+        self.theme_cls.theme_style = style
+        apply_palette(self.screen_manager, style)
+        self.main_menu_screen.theme_button.text = (
+            "Tryb nocny" if style == "Light" else "Tryb dzienny"
+        )
+        try:
+            save_theme(style)
+        except OSError as error:
+            dialog = MDDialog(
+                text=f"Nie udało się zapisać ustawienia motywu: {error}",
+                buttons=[MDFlatButton(text="OK", on_release=lambda _button: dialog.dismiss())],
+            )
+            dialog.open()
+
     def build(self):
         Window.minimum_width = 900
         Window.minimum_height = 640
         Window.size = (1100, 720)
-        self.theme_cls.theme_style = "Dark"
+        self.theme_cls.theme_style = load_theme()
         self.theme_cls.primary_palette = "Blue"
+        set_palette(self.theme_cls.theme_style)
 
         screen_manager = ScreenManager()
 
         main_menu_screen = MainMenu(name='main_menu')
+        main_menu_screen.app = self
+        main_menu_screen.theme_button.text = (
+            "Tryb nocny" if self.theme_cls.theme_style == "Light" else "Tryb dzienny"
+        )
         edit_screen_tow = EditScreenTow(name='edit_tow')
         tow_select_screen = TowSelectScreen(name='tow_select', dane_edit = edit_screen_tow)
         menu_screen_wz = WZScreen(name='menu_WZ')
@@ -2391,6 +2475,8 @@ class MainApp(MDApp):
         screen_manager.add_widget(edit_screen_pz)
         screen_manager.add_widget(edit_screen_wz)
 
+        self.screen_manager = screen_manager
+        self.main_menu_screen = main_menu_screen
         return screen_manager
 
 

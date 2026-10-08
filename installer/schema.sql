@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS `tow` (
   `ilo_is` DOUBLE NULL,
   `ce` DOUBLE NULL,
   `vat_rate` DECIMAL(5,2) NOT NULL DEFAULT 0,
+  `added_at` DATETIME NULL,
+  `modified_at` DATETIME NULL,
   PRIMARY KEY (`tow_kod`)
 ) ENGINE=InnoDB;
 
@@ -32,6 +34,7 @@ CREATE TABLE IF NOT EXISTS `wz` (
   `val` DOUBLE NULL,
   `odb_kod_odb` INT NOT NULL,
   `dok_id` VARCHAR(45) NULL,
+  `issue_date` DATE NULL,
   PRIMARY KEY (`idwz`),
   KEY `fk_wz_odb1_idx` (`odb_kod_odb`),
   CONSTRAINT `fk_wz_odb1` FOREIGN KEY (`odb_kod_odb`)
@@ -62,6 +65,7 @@ CREATE TABLE IF NOT EXISTS `pz` (
   `val` DOUBLE NULL,
   `dst_kod_dst` INT NOT NULL,
   `dok_id` VARCHAR(45) NULL,
+  `issue_date` DATE NULL,
   PRIMARY KEY (`idpz`),
   KEY `fk_pz_dst1_idx` (`dst_kod_dst`),
   CONSTRAINT `fk_pz_dst1` FOREIGN KEY (`dst_kod_dst`)

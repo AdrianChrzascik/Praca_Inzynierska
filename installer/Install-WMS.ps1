@@ -73,13 +73,19 @@ if (-not (Test-IsAdministrator)) {
     throw "Run Install-WMS.ps1 as Administrator."
 }
 
-$sourceCandidate = $ApplicationSource
-if (-not (Test-Path -LiteralPath $sourceCandidate)) {
-    $sourceCandidate = Join-Path $PSScriptRoot "..\dist\WMS"
+$source = $null
+foreach ($candidate in @(
+    $ApplicationSource,
+    (Join-Path $PSScriptRoot ".."),
+    (Join-Path $PSScriptRoot "..\dist\WMS")
+)) {
+    if (Test-Path -LiteralPath (Join-Path $candidate "WMS.exe") -PathType Leaf) {
+        $source = (Resolve-Path -LiteralPath $candidate).Path
+        break
+    }
 }
-$source = (Resolve-Path -LiteralPath $sourceCandidate).Path
-if (-not (Test-Path -LiteralPath (Join-Path $source "WMS.exe"))) {
-    throw "WMS.exe was not found in '$source'. Build the application first by running build.ps1."
+if (-not $source) {
+    throw "WMS.exe was not found near the installer. Build the application first by running build.ps1."
 }
 $schemaPath = Join-Path $PSScriptRoot "schema.sql"
 if (-not (Test-Path -LiteralPath $schemaPath)) {
@@ -170,26 +176,55 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ``$DatabaseName``.* TO '$DatabaseUser'@'
     if ($LASTEXITCODE -ne 0) { throw "Could not create the database or application account. Check the root password and MariaDB log." }
 
     # CREATE TABLE IF NOT EXISTS does not add columns to an existing installation.
-    foreach ($table in @('tow', 'wz_p', 'pz_p')) {
-        $columnCheck = "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '$DatabaseName' AND TABLE_NAME = '$table' AND COLUMN_NAME = 'vat_rate';"
+    $migrations = @(
+        @{ Table = 'tow'; Column = 'vat_rate'; Definition = 'DECIMAL(5,2) NOT NULL DEFAULT 0' },
+        @{ Table = 'wz_p'; Column = 'vat_rate'; Definition = 'DECIMAL(5,2) NOT NULL DEFAULT 0' },
+        @{ Table = 'pz_p'; Column = 'vat_rate'; Definition = 'DECIMAL(5,2) NOT NULL DEFAULT 0' },
+        @{ Table = 'tow'; Column = 'added_at'; Definition = 'DATETIME NULL' },
+        @{ Table = 'tow'; Column = 'modified_at'; Definition = 'DATETIME NULL' },
+        @{ Table = 'wz'; Column = 'issue_date'; Definition = 'DATE NULL' },
+        @{ Table = 'pz'; Column = 'issue_date'; Definition = 'DATE NULL' }
+    )
+    foreach ($migration in $migrations) {
+        $table = $migration.Table
+        $column = $migration.Column
+        $columnCheck = "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '$DatabaseName' AND TABLE_NAME = '$table' AND COLUMN_NAME = '$column';"
         $columnCount = @($columnCheck | & $dbClient "--defaults-extra-file=$defaultsFile" "--database=$DatabaseName" --batch --skip-column-names)
         if ($LASTEXITCODE -ne 0 -or $columnCount.Count -ne 1) {
-            throw "Could not check the VAT column in table $table."
+            throw "Could not check column $column in table $table."
         }
         $columnCountValue = $columnCount[0].Trim()
         if ($columnCountValue -notin @('0', '1')) {
-            throw "Unexpected VAT column check result for table $table`: $columnCountValue"
+            throw "Unexpected column check result for $table`.$column`: $columnCountValue"
         }
         if ($columnCountValue -eq '0') {
-            Write-Host "Adding VAT column to $table..." -ForegroundColor Cyan
-            "ALTER TABLE ``$table`` ADD COLUMN ``vat_rate`` DECIMAL(5,2) NOT NULL DEFAULT 0;" |
+            Write-Host "Adding column $column to $table..." -ForegroundColor Cyan
+            "ALTER TABLE ``$table`` ADD COLUMN ``$column`` $($migration.Definition);" |
                 & $dbClient "--defaults-extra-file=$defaultsFile" "--database=$DatabaseName" --batch
-            if ($LASTEXITCODE -ne 0) { throw "Could not add the VAT column to table $table." }
+            if ($LASTEXITCODE -ne 0) { throw "Could not add column $column to table $table." }
         }
     }
 
-    New-Item -Path $InstallDirectory -ItemType Directory -Force | Out-Null
-    Copy-Item -Path (Join-Path $source "*") -Destination $InstallDirectory -Recurse -Force
+    $installedPath = (New-Item -Path $InstallDirectory -ItemType Directory -Force).FullName
+    if (-not [string]::Equals($source, $installedPath, [StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -Path (Join-Path $source "*") -Destination $installedPath -Recurse -Force
+    }
+
+    # Keep the repair launcher next to WMS.exe so startup errors can open it.
+    $installedInstaller = Join-Path $installedPath "installer"
+    New-Item -Path $installedInstaller -ItemType Directory -Force | Out-Null
+    foreach ($name in @('Run-Installer.ps1', 'Install-WMS.ps1', 'schema.sql')) {
+        $from = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot $name)).Path
+        $to = Join-Path $installedInstaller $name
+        if (-not [string]::Equals($from, $to, [StringComparison]::OrdinalIgnoreCase)) {
+            Copy-Item -LiteralPath $from -Destination $to -Force
+        }
+    }
+    $launcherSource = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\Zainstaluj-WMS.cmd")).Path
+    $launcherDestination = Join-Path $installedPath "Zainstaluj-WMS.cmd"
+    if (-not [string]::Equals($launcherSource, $launcherDestination, [StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -LiteralPath $launcherSource -Destination $launcherDestination -Force
+    }
 
     $configDirectory = Join-Path $env:ProgramData "WMS"
     New-Item -Path $configDirectory -ItemType Directory -Force | Out-Null
